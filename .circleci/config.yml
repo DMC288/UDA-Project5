@@ -1,0 +1,109 @@
+version: '2.1'  # Version of CircleCI configuration
+
+orbs:
+  aws-eks: circleci/aws-eks@2.2.0  # Orb for AWS EKS
+  kubernetes: circleci/kubernetes@1.3  # Orb for Kubernetes
+
+commands:
+  aws_cli_credentials:
+    steps:
+      - run:
+          name: install aws cli and configure credential
+          command: |
+            pip install awscli
+            echo "AWS Access Key ID: $AWS_ACCESS_KEY_ID"
+            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+            echo "AWS Secret Access Key: $AWS_SECRET_ACCESS_KEY"
+            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+            echo "AWS Region: $AWS_DEFAULT_REGION"
+            aws configure set region $AWS_DEFAULT_REGION
+
+jobs:
+  linter-check-dockerfile:
+    docker:
+      - image: python:3.7.3-stretch  # Docker image for the job
+    working_directory: ~/repo
+    steps:
+      - checkout  # Checkout the code repository
+      - restore_cache:  # Restore cached dependencies
+          keys: 
+            - v1-dependencies-{{ checksum "requirements.txt" }}
+            - v1-dependencies-
+      # Run commands to install dependencies and linter tools
+      - run:  
+          name: install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            make install
+            wget -O /bin/hadolint https://github.com/hadolint/hadolint/releases/download/v1.16.3/hadolint-Linux-x86_64 &&\
+            chmod +x /bin/hadolint
+      - save_cache:  # Cache dependencies to speed up future runs
+          paths:
+            - ./venv
+          key: v1-dependencies-{{ checksum "requirements.txt" }}
+      - run:
+          name: run lint 
+          command: |
+            . venv/bin/activate
+            make lint  # Run the linter
+
+  build-and-push-image-docker:
+    docker:
+      - image: 'cimg/python:3.10'  # Docker image for building and pushing
+        user: root
+    steps:
+      - checkout  # Checkout the code repository
+      - aws_cli_credentials  # Use AWS CLI credentials
+      - setup_remote_docker:  # Set up remote Docker
+          version: 20.10.14
+          docker_layer_caching: false
+      - run:
+          name: run build docker and push to docker hub
+          command: |
+            docker build . -t $IMAGE_NAME:$IMAGE_VERSION
+            # Log in to Docker Hub.
+            docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            # Tag and push the Docker image to Docker Hub.
+            docker tag $IMAGE_NAME:$IMAGE_VERSION $DOCKER_USERNAME/$IMAGE_NAME:$IMAGE_VERSION
+            docker push $DOCKER_USERNAME/$IMAGE_NAME:$IMAGE_VERSION
+
+  create-cluster:
+    docker:
+      - image: 'cimg/python:3.10'  # Docker image for creating the EKS cluster
+    steps:
+      - checkout  # Checkout the code repository
+      - aws_cli_credentials  # Use AWS CLI credentials
+      - aws-eks/create-cluster:  # Create an AWS EKS cluster
+          cluster-name: udacity-devops-prj5
+          aws-region: us-east-2
+          node-type: t2.micro
+          nodes-min: 2
+          nodes-max: 3
+          ssh-public-key: udacityDeploy
+
+  create-deployment:
+    docker: 
+      - image: 'cimg/python:3.10'
+    steps:
+      - checkout
+      - aws_cli_credentials
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: udacity-devops-prj5
+          install-kubectl: true
+      - kubernetes/create-or-update-resource:
+          resource-file-path: infras/deployment.yaml
+          show-kubectl-command: true
+
+workflows:
+  deployment:
+    jobs:
+      - linter-check-dockerfile
+      - build-and-push-image-docker:
+          requires:
+            - "linter-check-dockerfile"
+      - create-cluster:
+          requires:
+            - "linter-check-dockerfile"
+      - create-deployment:
+          requires: [build-and-push-image-docker, create-cluster]
