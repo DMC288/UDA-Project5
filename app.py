@@ -5,7 +5,7 @@ app = Flask(__name__)
 
 @app.route('/', methods=['GET','POST'])
 def hello():
-    name = "Hello world! Xin chào thế giới!! こんにちは、 世界！ Hallo Welt! Hallå världen! Ciao Mondo! Hola mundo! Olá, mundo! Aloha Honua!"
+    name = "Hello world! I'm CuongDM4 from FPT"
     return render_template('index.html', name=name)
 @app.route('/favicon.ico')
 def favicon():
