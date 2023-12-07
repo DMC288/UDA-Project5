@@ -80,7 +80,7 @@ jobs:
           node-type: t2.micro
           nodes-min: 2
           nodes-max: 3
-          ssh-public-key: udacityDeploy
+          ssh-public-key: cuongdm4-uda-prj5
 
   create-deployment:
     docker: 
